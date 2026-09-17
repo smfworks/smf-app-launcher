@@ -1,79 +1,103 @@
-# SMF App Launcher
+# SMF App Launcher — Hermes Desktop Plugin
 
-A [Hermes Desktop](https://github.com/NousResearch/hermes-agent) plugin. It lists **SMF viral tools cloned on this machine** and opens them **locally** in the workspace.
+A [Hermes Agent](https://github.com/NousResearch/hermes-agent) desktop plugin that lists SMF Works viral utility apps **cloned locally on your machine** and renders them inside the Hermes desktop workspace — one click, no browser tab needed.
 
-It is not a gallery of live Vercel demos, and it does not list company sites.
+## What it does
 
-**License:** MIT
-
-## What it is
-
-- Sidebar row **SMF Apps** (below Artifacts) plus ⌘K → **Open SMF App Launcher**
-- Grid of apps that are actually on disk
-- **Start local** runs that clone’s Vite dev server on `127.0.0.1` and iframes it
-- Search / rescan
-
-## What it is not
-
-- Not the eight public Vercel URLs on [github.com/smfworks](https://github.com/smfworks) (those stay in the browser)
-- Not Next.js marketing repos (`*-site`, smfworks.com, WisdomForge, Clearinghouse, …)
-
-## What counts as an app
-
-A directory appears only when all of these hold:
-
-1. Git remote is `github.com/smfworks/<name>`
-2. It looks like a Vite client tool (`index.html` + `vite.config.*`)
-3. It is in the org README section **Try these (viral apps)** — the eight-tool kit
-
-Clone a kit repo anywhere under `$HOME` (typical: `~/projects/<name>` or `~/projects/<name>-demo`). Rescan. It shows. Until it is cloned, it stays hidden.
+- **Sidebar nav** — "SMF Apps" (rocket icon) appears below Artifacts in the Hermes Desktop sidebar
+- **Local disk scan** — the Python backend scans `~/projects/` for cloned SMF app repos. Only apps physically on disk appear. No GitHub API, no remote listing, no marketing sites.
+- **Grid view** — cards showing app title, description, source badge (Local dev / Vercel), and git status
+- **Live iframe** — clicking "Open" renders the app in a sandboxed iframe filling the workspace pane. Falls back to the Vercel URL if no local dev server is running.
+- **Search** — filter installed apps by name or description
+- **⌘K command** — "SMF Apps: Open App Launcher" jumps to the apps page
 
 ## Install
 
-Two halves: a Python scanner the gateway loads, and a Desktop UI file.
+### Option A: Unified package (recommended)
 
 ```bash
-git clone https://github.com/smfworks/smf-app-launcher.git
-PLUGIN_SRC=./smf-app-launcher
+git clone https://github.com/smfworks/smf-app-launcher.git ~/.hermes/plugins/smf-app-launcher
+```
 
-# Gateway / scanner
-mkdir -p ~/.hermes/plugins
-rsync -a --exclude '.git' --exclude '__pycache__' "$PLUGIN_SRC/" ~/.hermes/plugins/smf-app-launcher/
+Then enable the plugin:
 
-# Desktop UI
+```bash
+hermes plugins enable smf-app-launcher
+```
+
+The Electron main process copies `desktop/plugin.js` into `~/.hermes/desktop-plugins/smf-app-launcher/` automatically. The Python backend (`dashboard/plugin_api.py`) mounts at `/api/plugins/smf-app-launcher/`.
+
+### Option B: Desktop-only (no backend)
+
+```bash
 mkdir -p ~/.hermes/desktop-plugins/smf-app-launcher
-cp "$PLUGIN_SRC/desktop/plugin.js" ~/.hermes/desktop-plugins/smf-app-launcher/plugin.js
+cp desktop/plugin.js ~/.hermes/desktop-plugins/smf-app-launcher/plugin.js
 ```
 
-Enable the plugin in `~/.hermes/config.yaml`:
+Note: without the Python backend, `ctx.rest('/apps')` will fail and the page shows an error state. The unified package is the intended install path.
 
-```yaml
-plugins:
-  enabled:
-    - smf-app-launcher
+### Activate
+
+1. **Settings → Plugins → SMF Apps** → toggle on
+2. **⌘K → Reload desktop plugins**
+3. Sidebar → **SMF Apps**, or ⌘K → "SMF Apps: Open App Launcher"
+
+## How apps are discovered
+
+The Python backend (`dashboard/plugin_api.py`) has a registry of the 9 SMF viral utility apps. On page load, it scans `~/projects/` for directories matching those names. An app appears **only when its repo is cloned locally**.
+
+### Currently discovers
+
+| App | What it does | Repo |
+|-----|-------------|------|
+| Redact Before Share | Scrub secrets/PII from transcripts | [redact-before-share](https://github.com/smfworks/redact-before-share) |
+| Tool Permit | Agent tool allowlist badge | [tool-permit](https://github.com/smfworks/tool-permit) |
+| Prompt Diff | Visual prompt diff | [prompt-diff](https://github.com/smfworks/prompt-diff) |
+| Skill Card | SKILL.md → shareable PNG card | [skill-card](https://github.com/smfworks/skill-card) |
+| Skill Lint | Lint SKILL.md score card | [skill-lint](https://github.com/smfworks/skill-lint) |
+| Refuse Card | GO/HOLD/NO action stamp | [refuse-card](https://github.com/smfworks/refuse-card) |
+| Paste to Skill | SOP → clean SKILL.md | [paste-to-skill](https://github.com/smfworks/paste-to-skill) |
+| Agent Receipt | Session → shareable receipt card | [agent-receipt](https://github.com/smfworks/agent-receipt) |
+| Trajectory Arena | Agentic coding visualizer | [trajectory-arena](https://github.com/smfworks/trajectory-arena) |
+
+**Not included:** marketing sites, infrastructure repos, or anything that isn't a viral utility app.
+
+### Add a new viral app
+
+1. Add an entry to `VIRAL_APPS` in `dashboard/plugin_api.py`
+2. Clone the repo: `git clone https://github.com/smfworks/new-app.git ~/projects/new-app`
+3. Reload desktop plugins (⌘K → Reload)
+
+## Architecture
+
+```
+smf-app-launcher/
+├── plugin.yaml              # Agent plugin manifest (kind: standalone)
+├── __init__.py              # register(ctx): pass — no agent tools
+├── dashboard/
+│   ├── manifest.json        # Dashboard/desktop backend mount config
+│   └── plugin_api.py        # Python backend — scans ~/projects/, returns app list
+├── desktop/
+│   └── plugin.js            # Desktop UI — sidebar nav, route, grid + iframe
+└── plugin/
+    └── plugin.js            # Standalone copy (same file)
 ```
 
-Then in Hermes Desktop: **⌘K → Reload desktop plugins**. If the page is empty after that, reload the gateway from a shell outside the running process so `dashboard/plugin_api.py` is imported, then reload plugins again.
+**Data flow:**
 
-On first **Start local**, the clone needs `node_modules` (`npm install` in that app’s directory).
+1. Desktop plugin calls `ctx.rest('/apps')` → hits `plugin_api.py` on the gateway
+2. Backend scans `~/projects/` for cloned repos in the `VIRAL_APPS` registry
+3. Returns JSON `{ apps: [...], projects_dir: "..." }`
+4. Desktop renders the grid; clicking "Open" loads the app URL in an iframe
 
-## Layout
-
-```
-plugin.yaml                 Hermes plugin metadata
-plugin.py                   Agent half (no tools)
-dashboard/plugin_api.py     Local clone scanner + Vite starter
-dashboard/manifest.json
-desktop/plugin.js           Hermes Desktop UI (sidebar, grid, iframe)
-```
+No data leaves your machine. The scan is local. Apps render in a sandboxed iframe with `allow-scripts allow-same-origin allow-forms allow-popups`.
 
 ## Requirements
 
-- Hermes Desktop (the UI file does not load in CLI-only)
-- Gateway with this plugin in `plugins.enabled`
-- Node.js / npm for **Start local**
-- At least one viral-kit repo cloned
+- [Hermes Desktop](https://github.com/NousResearch/hermes-agent) (the plugin loads in the desktop app, not CLI/gateway alone)
+- Python 3 (for the backend API — already present with Hermes)
+- SMF viral apps cloned to `~/projects/`
 
 ## License
 
-MIT — Copyright (c) 2026 SMF Works
+MIT — SMF Works

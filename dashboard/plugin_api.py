@@ -84,6 +84,20 @@ def _pkg_field(path: Path, key: str) -> str:
         return ""
 
 
+def _port_open(port: int) -> bool:
+    import socket
+
+    sock = socket.socket()
+    sock.settimeout(0.15)
+    try:
+        sock.connect(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
 def _dev_url(path: Path) -> Optional[str]:
     pkg = path / "package.json"
     ports: List[int] = []

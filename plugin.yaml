@@ -1,5 +1,5 @@
 name: smf-app-launcher
 version: "1.0"
-description: Hermes Desktop launcher for locally cloned SMF viral apps.
+description: Launch viral SMF utility apps cloned to ~/projects/ — rendered inside Hermes Desktop.
 author: SMF Works
 kind: standalone

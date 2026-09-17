@@ -1,7 +1,7 @@
 {
   "name": "smf-app-launcher",
   "label": "SMF Apps",
-  "description": "Hermes Desktop launcher for locally cloned SMF viral apps.",
+  "description": "Launch viral SMF utility apps cloned to ~/projects/ — rendered inside Hermes Desktop.",
   "icon": "Rocket",
   "version": "1.0.0",
   "tab": {
