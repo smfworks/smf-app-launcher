@@ -1,0 +1,12 @@
+{
+  "name": "smf-app-launcher",
+  "label": "SMF Apps",
+  "description": "Hermes Desktop launcher for locally cloned SMF viral apps.",
+  "icon": "Rocket",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/smf-apps",
+    "position": "after:artifacts"
+  },
+  "api": "plugin_api.py"
+}

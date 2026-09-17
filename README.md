@@ -1,78 +1,79 @@
-# SMF App Launcher — Hermes Desktop Plugin
+# SMF App Launcher
 
-A [Hermes Agent](https://github.com/NousResearch/hermes-agent) desktop plugin that scans your local filesystem for installed SMF Works web apps and renders them inside the Hermes desktop workspace — one click, no browser tab needed.
+A [Hermes Desktop](https://github.com/NousResearch/hermes-agent) plugin. It lists **SMF viral tools cloned on this machine** and opens them **locally** in the workspace.
 
-## What it does
+It is not a gallery of live Vercel demos, and it does not list company sites.
 
-- **Sidebar nav** — "SMF Apps" appears below Artifacts in the Hermes Desktop sidebar
-- **Local scan only** — scans `~/` and `~/workspace/` for cloned SMF app repos. No GitHub API, no remote listing. Only apps physically on disk appear.
-- **Grid view** — cards showing app name, install path, and status badge (installed/running)
-- **Live iframe** — clicking "Open" starts a local static file server and renders the app full-pane inside Hermes Desktop
-- **Search** — filter installed apps by name
-- **⌘K command** — "Open SMF App Launcher" jumps to the apps page
+**License:** MIT
+
+## What it is
+
+- Sidebar row **SMF Apps** (below Artifacts) plus ⌘K → **Open SMF App Launcher**
+- Grid of apps that are actually on disk
+- **Start local** runs that clone’s Vite dev server on `127.0.0.1` and iframes it
+- Search / rescan
+
+## What it is not
+
+- Not the eight public Vercel URLs on [github.com/smfworks](https://github.com/smfworks) (those stay in the browser)
+- Not Next.js marketing repos (`*-site`, smfworks.com, WisdomForge, Clearinghouse, …)
+
+## What counts as an app
+
+A directory appears only when all of these hold:
+
+1. Git remote is `github.com/smfworks/<name>`
+2. It looks like a Vite client tool (`index.html` + `vite.config.*`)
+3. It is in the org README section **Try these (viral apps)** — the eight-tool kit
+
+Clone a kit repo anywhere under `$HOME` (typical: `~/projects/<name>` or `~/projects/<name>-demo`). Rescan. It shows. Until it is cloned, it stays hidden.
 
 ## Install
 
+Two halves: a Python scanner the gateway loads, and a Desktop UI file.
+
 ```bash
-# Copy the plugin into your Hermes desktop-plugins directory
+git clone https://github.com/smfworks/smf-app-launcher.git
+PLUGIN_SRC=./smf-app-launcher
+
+# Gateway / scanner
+mkdir -p ~/.hermes/plugins
+rsync -a --exclude '.git' --exclude '__pycache__' "$PLUGIN_SRC/" ~/.hermes/plugins/smf-app-launcher/
+
+# Desktop UI
 mkdir -p ~/.hermes/desktop-plugins/smf-app-launcher
-cp plugin/plugin.js ~/.hermes/desktop-plugins/smf-app-launcher/plugin.js
+cp "$PLUGIN_SRC/desktop/plugin.js" ~/.hermes/desktop-plugins/smf-app-launcher/plugin.js
 ```
 
-Then in Hermes Desktop: **⌘K → "Reload desktop plugins"**
+Enable the plugin in `~/.hermes/config.yaml`:
 
-The "SMF Apps" nav row appears in the sidebar. Or use ⌘K → "Open SMF App Launcher".
+```yaml
+plugins:
+  enabled:
+    - smf-app-launcher
+```
 
-## How apps are discovered
+Then in Hermes Desktop: **⌘K → Reload desktop plugins**. If the page is empty after that, reload the gateway from a shell outside the running process so `dashboard/plugin_api.py` is imported, then reload plugins again.
 
-The plugin scans for directories matching known SMF web app names (with optional `-demo` suffix) that contain an `index.html` file. It checks:
+On first **Start local**, the clone needs `node_modules` (`npm install` in that app’s directory).
 
-- `~/<app-name>/` and `~/<app-name>-demo/`
-- `~/workspace/<app-name>/` and `~/workspace/<app-name>-demo/`
+## Layout
 
-### Currently discovers
-
-Any of these cloned to disk will appear:
-
-| App | Repo |
-|-----|------|
-| Paste → Skill | [paste-to-skill](https://github.com/smfworks/paste-to-skill) |
-| Skill Lint | [skill-lint](https://github.com/smfworks/skill-lint) |
-| Skill Card | [skill-card](https://github.com/smfworks/skill-card) |
-| Prompt Diff | [prompt-diff](https://github.com/smfworks/prompt-diff) |
-| Refuse Card | [refuse-card](https://github.com/smfworks/refuse-card) |
-| Tool Permit | [tool-permit](https://github.com/smfworks/tool-permit) |
-| Agent Receipt | [agent-receipt](https://github.com/smfworks/agent-receipt) |
-| Redact Before Share | [redact-before-share](https://github.com/smfworks/redact-before-share) |
-| H3 Longform Capture | [h3-longform-capture](https://github.com/smfworks/h3-longform-capture) |
-| Flybrain Visual Demos | [flybrain-visual-demos](https://github.com/smfworks/flybrain-visual-demos) |
-| Spark Observatory | [spark-observatory](https://github.com/smfworks/spark-observatory) |
-| Hermes Mission Control | [hermes-mission-control](https://github.com/smfworks/hermes-mission-control) |
-| Hermes Skill Forge | [hermes-skill-forge](https://github.com/smfworks/hermes-skill-forge) |
-| WisdomForge | [wisdomforge](https://github.com/smfworks/wisdomforge) |
-
-### Add a new app
-
-1. Clone the repo: `git clone https://github.com/smfworks/new-app.git ~/new-app`
-2. Add the repo name to `KNOWN_APPS` in `plugin/plugin.js`
-3. Hit **Refresh** in the launcher (or ⌘K → Reload desktop plugins)
-
-## How it works
-
-When you click "Open" on an app:
-
-1. The plugin spawns a local static file server (`python3 -m http.server`) serving the app's directory
-2. The app renders in a sandboxed `<iframe>` filling the workspace pane
-3. A back button returns to the grid
-
-No data leaves your machine. All apps run locally.
+```
+plugin.yaml                 Hermes plugin metadata
+plugin.py                   Agent half (no tools)
+dashboard/plugin_api.py     Local clone scanner + Vite starter
+dashboard/manifest.json
+desktop/plugin.js           Hermes Desktop UI (sidebar, grid, iframe)
+```
 
 ## Requirements
 
-- [Hermes Desktop](https://github.com/NousResearch/hermes-agent) (the plugin loads in the desktop app, not CLI/gateway alone)
-- Python 3 (for the local static file server) or `npx serve` as fallback
-- SMF web apps cloned to disk
+- Hermes Desktop (the UI file does not load in CLI-only)
+- Gateway with this plugin in `plugins.enabled`
+- Node.js / npm for **Start local**
+- At least one viral-kit repo cloned
 
 ## License
 
-MIT — SMF Works
+MIT — Copyright (c) 2026 SMF Works
