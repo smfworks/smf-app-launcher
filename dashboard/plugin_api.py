@@ -1,22 +1,23 @@
-"""SMF App Launcher — list viral SMF tools cloned on this machine.
+"""SMF App Launcher — list and start viral SMF tools on this machine.
 
-Membership:
-  1. Git remote is github.com/smfworks/<name>
-  2. Looks like a Vite client tool (index.html + vite.config), not Next.js sites
-  3. Name is not a marketing/site repo
+Membership is the viral kit (README + fallback names). Disk clones are
+preferred; missing clones are installed on Start into ~/.hermes/smf-apps/.
 
-The org README ``## Try these (viral apps)`` section is optional enrichment
-(title/description/demo URL). Disk is the source of truth.
+A local URL is only reported for a Vite process THIS launcher started.
+Never treat an unrelated :5173 (or Vercel) as the app.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
+import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -35,11 +36,67 @@ SITE_NAMES = {
     "smfwisdomforge", "aiclearinghouse-site",
 }
 REMOTE_RE = re.compile(r"github\.com[:/]+smfworks/([^/\s]+?)(?:\.git)?$", re.I)
+KIT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 MAX_DEPTH = 4
+
+KIT: Dict[str, Dict[str, str]] = {
+    "paste-to-skill": {
+        "title": "Paste → Skill",
+        "description": "Paste an SOP or notes → Hermes/OpenClaw SKILL.md",
+    },
+    "skill-lint": {
+        "title": "Skill Lint",
+        "description": "Green / yellow / red SKILL.md report card with fix hints",
+    },
+    "skill-card": {
+        "title": "Skill Card",
+        "description": "Paste a SKILL.md → pretty shareable one-pager PNG",
+    },
+    "prompt-diff": {
+        "title": "Prompt Diff",
+        "description": "Paste two prompts → visual shareable diff",
+    },
+    "agent-contract": {
+        "title": "Agent Contract",
+        "description": "Human↔agent agreement card: roles, success criteria, stop conditions",
+    },
+    "refuse-card": {
+        "title": "Refuse Card",
+        "description": "GO / HOLD / NO stamp for a proposed agent action",
+    },
+    "tool-permit": {
+        "title": "Tool Permit",
+        "description": "Declare allowed tools → shareable allowlist / PERMIT badge",
+    },
+    "agent-receipt": {
+        "title": "Agent Receipt",
+        "description": "Turn any agent session into a dark shareable receipt card",
+    },
+    "redact-before-share": {
+        "title": "Redact Before Share",
+        "description": "Paste a transcript → scrub secrets/PII → clean export",
+    },
+    "context-budget": {
+        "title": "Context Budget",
+        "description": "Paste a prompt or dump → shareable token-budget card",
+    },
+}
+
+_PROCS: Dict[str, Dict[str, Any]] = {}
 
 
 def _home() -> Path:
     return Path.home()
+
+
+def _clone_root() -> Path:
+    return _home() / ".hermes" / "smf-apps"
+
+
+def _log_dir() -> Path:
+    path = _clone_root() / ".logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _is_site_name(name: str) -> bool:
@@ -47,6 +104,17 @@ def _is_site_name(name: str) -> bool:
     if n.endswith("-site") or n.endswith("-website"):
         return True
     return n in SITE_NAMES
+
+
+def safe_kit_name(name: str) -> Optional[str]:
+    n = (name or "").strip().lower()
+    if not KIT_NAME_RE.fullmatch(n):
+        return None
+    if _is_site_name(n):
+        return None
+    if n not in KIT:
+        return None
+    return n
 
 
 def _is_viral_web_app(path: Path) -> bool:
@@ -87,37 +155,34 @@ def _pkg_field(path: Path, key: str) -> str:
 def _port_open(port: int) -> bool:
     import socket
 
-    sock = socket.socket()
-    sock.settimeout(0.15)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _proc_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
     try:
-        sock.connect(("127.0.0.1", port))
+        os.kill(pid, 0)
         return True
     except OSError:
         return False
-    finally:
-        sock.close()
 
 
 def _dev_url(path: Path) -> Optional[str]:
-    pkg = path / "package.json"
-    ports: List[int] = []
-    if pkg.is_file():
-        try:
-            data = json.loads(pkg.read_text(encoding="utf-8"))
-            script = str(data.get("scripts", {}).get("dev", ""))
-        except Exception:
-            script = ""
-        match = re.search(r"--port\s+(\d+)", script)
-        if match:
-            ports.append(int(match.group(1)))
-    ports.extend([5173, 4173, 3000])
-    seen = set()
-    for port in ports:
-        if port in seen:
-            continue
-        seen.add(port)
-        if _port_open(port):
-            return f"http://127.0.0.1:{port}"
+    """Only a server this launcher started for this clone. Never a stray :5173."""
+    name = (_origin_name(path) or path.name).lower()
+    existing = _PROCS.get(name)
+    if not existing:
+        return None
+    port = int(existing["port"])
+    pid = int(existing.get("pid") or 0)
+    if pid and not _proc_alive(pid):
+        _PROCS.pop(name, None)
+        return None
+    if _port_open(port):
+        return f"http://127.0.0.1:{port}/"
     return None
 
 
@@ -125,6 +190,8 @@ def _rank(path: Path) -> int:
     s = str(path)
     if path.name.endswith("-demo"):
         return 0
+    if "/.hermes/smf-apps/" in s or s.endswith("/.hermes/smf-apps"):
+        return 1
     if "/projects/" in s:
         return 5
     if "/workspace/" in s:
@@ -149,10 +216,8 @@ def _walk(root: Path, depth: int, found: Dict[str, Dict[str, Any]]) -> None:
             "local_path": str(root.resolve()),
             "dev_url": _dev_url(root),
             "has_git": True,
+            "cloned": True,
         }
-        home = rec["homepage"]
-        if home.startswith("http") and (".vercel.app" in home or ".netlify.app" in home):
-            rec["vercel_url"] = home if home.endswith("/") else home + "/"
         prev = found.get(name.lower())
         if prev is None or _rank(root) < _rank(Path(prev["local_path"])):
             found[name.lower()] = rec
@@ -165,6 +230,23 @@ def _walk(root: Path, depth: int, found: Dict[str, Dict[str, Any]]) -> None:
         if not child.is_dir() or child.name in SKIP_DIR or child.name.startswith("."):
             continue
         _walk(child, depth + 1, found)
+
+
+def _scan_clones() -> Dict[str, Dict[str, Any]]:
+    found: Dict[str, Dict[str, Any]] = {}
+    home = _home()
+    bases = (
+        home / ".hermes" / "smf-apps",
+        home / "projects",
+        home / "workspace",
+        home / "src",
+        home / "github",
+        home / "smf-apps",
+    )
+    for base in bases:
+        if base.is_dir():
+            _walk(base, 0, found)
+    return found
 
 
 def parse_viral_readme(md: str) -> Dict[str, Dict[str, str]]:
@@ -185,7 +267,6 @@ def parse_viral_readme(md: str) -> Dict[str, Dict[str, str]]:
             continue
         joined = " ".join(cells)
         gh = re.search(r"https?://github\.com/[^/\s)]+/([^/\s)#]+)", joined, re.I)
-        demo = re.search(r"https?://[^\s)<>\"]+\.(?:vercel|netlify)\.app[^\s)<>\"]*", joined, re.I)
         name = gh.group(1).rstrip(").,") if gh else ""
         if not name:
             continue
@@ -197,7 +278,7 @@ def parse_viral_readme(md: str) -> Dict[str, Dict[str, str]]:
         extra[name.lower()] = {
             "title": title or name,
             "description": description,
-            "vercel_url": (demo.group(0).rstrip(".,;") + "/") if demo else "",
+            "vercel_url": "",
         }
     return extra
 
@@ -212,46 +293,52 @@ def fetch_readme_extra() -> Dict[str, Dict[str, str]]:
         return {}
 
 
-@router.get("/apps")
-async def list_apps() -> JSONResponse:
-    found: Dict[str, Dict[str, Any]] = {}
-    home = _home()
-    bases = (
-        home / "projects",
-        home / "workspace",
-        home / "src",
-        home / "github",
-        home / "smf-apps",
-        home / ".hermes" / "smf-apps",
-        home / "smf-oversight-cache" / "repos",
-        home / "Documents",
-        home / "prod-hardening",
-        home / "Downloads",
-    )
-    for base in bases:
-        if base.is_dir():
-            _walk(base, 0, found)
-    try:
-        for child in home.iterdir():
-            if not child.is_dir() or child.name.startswith(".") or child.name in SKIP_DIR:
-                continue
-            _walk(child, MAX_DEPTH, found)
-    except OSError:
-        pass
-    extra = fetch_readme_extra()
-    apps = []
-    for key, rec in found.items():
-        if extra and key not in extra:
-            continue
-        meta = extra.get(key, {})
+def merge_catalog(
+    found: Dict[str, Dict[str, Any]],
+    extra: Dict[str, Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    allowed = set(KIT)
+    apps: List[Dict[str, Any]] = []
+    for key in allowed:
+        rec = dict(found.get(key) or {
+            "name": key,
+            "title": key,
+            "description": "",
+            "homepage": "",
+            "vercel_url": "",
+            "htmlUrl": f"https://github.com/{OWNER}/{key}",
+            "local_path": "",
+            "dev_url": None,
+            "has_git": False,
+            "cloned": False,
+        })
+        rec["name"] = rec.get("name") or key
+        rec["cloned"] = bool(rec.get("local_path"))
+        rec["vercel_url"] = ""
+        meta = {**KIT.get(key, {}), **extra.get(key, {})}
         if meta.get("title"):
             rec["title"] = meta["title"]
         if meta.get("description") and not rec.get("description"):
             rec["description"] = meta["description"]
-        if meta.get("vercel_url") and not rec.get("vercel_url"):
-            rec["vercel_url"] = meta["vercel_url"]
+        rec["htmlUrl"] = rec.get("htmlUrl") or f"https://github.com/{OWNER}/{key}"
         apps.append(rec)
     apps.sort(key=lambda a: (a.get("title") or a["name"]).lower())
+    return apps
+
+
+def _ok(payload: Dict[str, Any], status: int = 200) -> JSONResponse:
+    return JSONResponse(payload, status_code=status)
+
+
+def _fail(error: str, **extra: Any) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": error, **extra}, status_code=200)
+
+
+@router.get("/apps")
+async def list_apps() -> JSONResponse:
+    found = _scan_clones()
+    extra = fetch_readme_extra()
+    apps = merge_catalog(found, extra)
     return JSONResponse({"apps": apps, "count": len(apps), "source": "local-clone"})
 
 
@@ -260,76 +347,194 @@ async def health() -> dict:
     return {"status": "ok", "plugin": "smf-app-launcher"}
 
 
-_PROCS: Dict[str, Dict[str, Any]] = {}
+def _npm() -> str:
+    found = shutil.which("npm")
+    if found:
+        return found
+    nvm = _home() / ".nvm" / "versions" / "node"
+    if nvm.is_dir():
+        matches = sorted(nvm.glob("*/bin/npm"), reverse=True)
+        if matches:
+            return str(matches[0])
+    raise FileNotFoundError("npm is not on PATH — install Node.js 20+")
 
 
-def _port_open(port: int) -> bool:
-    import socket
+def _node_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    npm = Path(_npm())
+    env["PATH"] = str(npm.parent) + os.pathsep + env.get("PATH", "")
+    env["BROWSER"] = "none"
+    return env
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+def ensure_npm_install(path: Path) -> Optional[str]:
+    if (path / "node_modules").is_dir():
+        return None
+    try:
+        proc = subprocess.run(
+            [_npm(), "install"],
+            cwd=str(path),
+            env=_node_env(),
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return str(exc)
+    except subprocess.TimeoutExpired:
+        return "npm install timed out after 180s"
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip()[-800:]
+        return f"npm install failed: {tail or 'no output'}"
+    if not (path / "node_modules").is_dir():
+        return "npm install finished but node_modules is still missing"
+    return None
+
+
+def _rm_incomplete(path: Path) -> None:
+    if path.exists() and not _is_viral_web_app(path):
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def ensure_clone(name: str) -> Tuple[Optional[Path], Optional[str]]:
+    found = _scan_clones()
+    rec = found.get(name)
+    if rec and rec.get("local_path"):
+        return Path(rec["local_path"]), None
+    dest = _clone_root() / name
+    if dest.is_dir() and _is_viral_web_app(dest):
+        return dest, None
+    if dest.exists():
+        _rm_incomplete(dest)
+        if dest.exists():
+            return None, f"{dest} exists but is not a Vite kit app"
+    _clone_root().mkdir(parents=True, exist_ok=True)
+    url = f"https://github.com/{OWNER}/{name}.git"
+    try:
+        proc = subprocess.run(
+            ["git", "clone", "--depth", "1", url, str(dest)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except FileNotFoundError:
+        _rm_incomplete(dest)
+        return None, "git is not on PATH"
+    except subprocess.TimeoutExpired:
+        _rm_incomplete(dest)
+        return None, "git clone timed out"
+    if proc.returncode != 0:
+        _rm_incomplete(dest)
+        tail = (proc.stderr or proc.stdout or "").strip()[-800:]
+        return None, f"git clone failed: {tail or 'no output'}"
+    if not _is_viral_web_app(dest):
+        _rm_incomplete(dest)
+        return None, f"cloned {name} but it is not a Vite client app"
+    return dest, None
+
+
+def _pick_port(name: str) -> int:
+    base = 5200 + (sum(ord(c) for c in name) % 80)
+    for port in range(base, base + 30):
+        existing = _PROCS.get(name)
+        if existing and int(existing["port"]) == port and _port_open(port):
+            return port
+        if not _port_open(port):
+            return port
+    raise RuntimeError("no free loopback port in 5200-5280")
+
+
+def _tail(path: Path, n: int = 40) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-n:]).strip()
 
 
 @router.post("/apps/{name}/start")
 def start_app(name: str) -> JSONResponse:
-    """Start the local Vite dev server for a cloned kit app. Never opens Vercel."""
-    import socket
-    import time
+    """Clone if needed, npm install if needed, start Vite on 127.0.0.1. Never Vercel."""
+    kit = safe_kit_name(name)
+    if kit is None:
+        return _fail("not a viral-kit app")
 
-    found: Dict[str, Dict[str, Any]] = {}
-    home = _home()
-    for base in (
-        home / ".hermes" / "smf-apps",
-        home / "projects",
-        home / "workspace",
-        home / "smf-oversight-cache" / "repos",
-        home / "src",
+    path, clone_err = ensure_clone(kit)
+    if clone_err or path is None:
+        return _fail(clone_err or "clone failed")
+
+    install_err = ensure_npm_install(path)
+    if install_err:
+        return _fail(install_err, local_path=str(path))
+
+    existing = _PROCS.get(kit)
+    if existing and _port_open(int(existing["port"])) and (
+        not existing.get("pid") or _proc_alive(int(existing["pid"]))
     ):
-        if base.is_dir():
-            _walk(base, 0, found)
-    rec = found.get(name.lower())
-    if rec is None:
-        return JSONResponse({"ok": False, "error": "not cloned on this machine"}, status_code=404)
-    extra = fetch_readme_extra()
-    if extra and name.lower() not in extra:
-        return JSONResponse({"ok": False, "error": "not a viral-kit app"}, status_code=404)
-    path = Path(rec["local_path"])
-    if not (path / "node_modules").is_dir():
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "cloned but node_modules is missing — run npm install in " + str(path),
-                "local_path": str(path),
-            },
-            status_code=409,
+        url = f"http://127.0.0.1:{existing['port']}/"
+        return _ok({
+            "ok": True,
+            "name": kit,
+            "title": KIT.get(kit, {}).get("title") or kit,
+            "local_path": str(path),
+            "url": url,
+            "dev_url": url,
+            "vercel_url": "",
+            "cloned": True,
+        })
+
+    try:
+        port = _pick_port(kit)
+    except RuntimeError as exc:
+        return _fail(str(exc), local_path=str(path))
+
+    try:
+        log_path = _log_dir() / f"{kit}.log"
+        log_fh = open(log_path, "ab", buffering=0)
+    except OSError as exc:
+        return _fail(f"could not write launcher log: {exc}", local_path=str(path))
+    try:
+        proc = subprocess.Popen(
+            [_npm(), "run", "dev", "--", "--host", "127.0.0.1", "--port", str(port), "--strictPort"],
+            cwd=str(path),
+            env=_node_env(),
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
-    existing = _PROCS.get(name.lower())
-    if existing and _port_open(int(existing["port"])):
-        rec["url"] = f"http://127.0.0.1:{existing['port']}/"
-        rec["dev_url"] = rec["url"]
-        rec["vercel_url"] = ""
-        return JSONResponse({"ok": True, **rec})
-    port = 5200 + (sum(ord(c) for c in name.lower()) % 80)
-    env = os.environ.copy()
-    env["BROWSER"] = "none"
-    proc = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", str(port), "--strictPort"],
-        cwd=str(path),
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    deadline = time.time() + 25
+    except Exception as exc:
+        log_fh.close()
+        return _fail(f"could not spawn vite: {exc}", local_path=str(path))
+    log_fh.close()
+
+    deadline = time.time() + 40
     while time.time() < deadline:
         if proc.poll() is not None:
-            return JSONResponse({"ok": False, "error": "vite exited before bind"}, status_code=500)
+            return _fail(
+                f"vite exited before bind\n{_tail(log_path)}",
+                local_path=str(path),
+            )
         if _port_open(port):
-            _PROCS[name.lower()] = {"port": port, "pid": proc.pid}
-            rec["url"] = f"http://127.0.0.1:{port}/"
-            rec["dev_url"] = rec["url"]
-            rec["vercel_url"] = ""
-            return JSONResponse({"ok": True, **rec})
+            _PROCS[kit] = {"port": port, "pid": proc.pid}
+            url = f"http://127.0.0.1:{port}/"
+            return _ok({
+                "ok": True,
+                "name": kit,
+                "title": KIT.get(kit, {}).get("title") or kit,
+                "local_path": str(path),
+                "url": url,
+                "dev_url": url,
+                "vercel_url": "",
+                "cloned": True,
+            })
         time.sleep(0.3)
-    return JSONResponse({"ok": False, "error": "vite did not bind in time"}, status_code=504)
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        proc.terminate()
+    return _fail(
+        f"vite did not bind in time — see {log_path}\n{_tail(log_path)}",
+        local_path=str(path),
+    )

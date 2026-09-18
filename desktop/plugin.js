@@ -1,6 +1,6 @@
 /**
  * SMF App Launcher — local viral kit only.
- * Open starts localhost Vite. Never iframes Vercel or marketing sites.
+ * Open clones + npm install + starts localhost Vite. Never iframes Vercel.
  */
 import {
   cn,
@@ -28,13 +28,37 @@ const ID = 'smf-app-launcher'
 const $selectedApp = atom(null)
 const $searchQuery = atom('')
 const $starting = atom(null)
+const START_TIMEOUT_MS = 420000
 
 function localUrl(app) {
   if (!app) return ''
-  const u = app.url || app.dev_url || ''
-  if (typeof u !== 'string') return ''
-  if (u.includes('vercel.app') || u.includes('netlify.app')) return ''
-  return u
+  const raw = app.url || app.dev_url || ''
+  if (typeof raw !== 'string') return ''
+  let parsed
+  try {
+    parsed = new URL(raw)
+  } catch {
+    return ''
+  }
+  if (parsed.username || parsed.password) return ''
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
+  if (parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') return ''
+  if (parsed.hostname.includes('vercel.app') || parsed.hostname.includes('netlify.app')) return ''
+  return parsed.href
+}
+
+function errText(err) {
+  if (!err) return 'Could not start local app'
+  if (typeof err === 'string') return err
+  if (err.error) return String(err.error)
+  if (err.message) return String(err.message)
+  return 'Could not start local app'
+}
+
+function statusLabel(app) {
+  if (localUrl(app)) return 'Running'
+  if (app.local_path) return 'Cloned'
+  return 'Not installed'
 }
 
 function AppCard({ app, onOpen }) {
@@ -58,26 +82,25 @@ function AppCard({ app, onOpen }) {
             children: app.title || app.name,
           }),
           jsx(Badge, {
-            variant: 'secondary',
             className: 'shrink-0 text-[0.625rem]',
-            children: url ? 'Local' : 'Cloned',
+            children: statusLabel(app),
           }),
         ],
       }),
       jsx('div', {
         className: 'line-clamp-2 text-xs leading-relaxed text-(--ui-text-secondary)',
-        children: app.description || app.local_path,
+        children: app.description || app.local_path || 'Click to install and open locally.',
       }),
       jsx(Button, {
         variant: 'default',
         size: 'sm',
-        disabled: !app.local_path || busy,
+        disabled: busy,
         onClick: () => {
           haptic('tap')
           onOpen(app)
         },
         className: 'h-7 text-xs',
-        children: busy ? 'Starting…' : url ? 'Open' : 'Start local',
+        children: busy ? 'Starting…' : url ? 'Open' : app.local_path ? 'Start local' : 'Install & open',
       }),
     ],
   })
@@ -94,23 +117,30 @@ function AppGrid({ apps, onOpen }) {
           String(a.description || '').toLowerCase().includes(q)
       )
     : apps
+  const cloned = apps.filter((a) => a.local_path).length
   return jsxs('div', {
     className: 'flex h-full flex-col gap-3 p-4',
     children: [
       jsx(SearchField, {
         value: search,
-        placeholder: 'Search cloned viral apps…',
+        placeholder: 'Search viral apps…',
         onChange: (v) => $searchQuery.set(v),
-        className: 'h-8',
+        containerClassName: 'h-8',
       }),
       jsx('div', {
         className: 'text-xs text-(--ui-text-tertiary)',
-        children: filtered.length + ' viral app' + (filtered.length === 1 ? '' : 's') + ' cloned on this machine',
+        children:
+          filtered.length +
+          ' kit app' +
+          (filtered.length === 1 ? '' : 's') +
+          ' · ' +
+          cloned +
+          ' cloned on this machine',
       }),
       filtered.length === 0
         ? jsx(EmptyState, {
             title: 'No matching apps',
-            description: 'Clone a viral SMF app (Vite tool, not a *-site), then Rescan.',
+            description: 'The viral kit is listed even before clone. Try a different search.',
           })
         : jsx(ScrollArea, {
             className: 'min-h-0 flex-1',
@@ -146,7 +176,7 @@ function AppLive({ app, onBack }) {
             className: 'min-w-0 flex-1 truncate text-sm font-medium',
             children: app.title || app.name,
           }),
-          jsx(Badge, { variant: 'secondary', className: 'text-[0.625rem]', children: 'localhost' }),
+          jsx(Badge, { className: 'text-[0.625rem]', children: 'localhost' }),
         ],
       }),
       url
@@ -159,7 +189,7 @@ function AppLive({ app, onBack }) {
           })
         : jsx(EmptyState, {
             title: 'No local server',
-            description: 'Cloned, but not running on localhost.',
+            description: 'Start the app to open it on localhost.',
           }),
     ],
   })
@@ -182,14 +212,14 @@ function AppLauncherPage({ ctx }) {
       className: 'flex h-full flex-col items-center justify-center gap-3',
       children: [
         jsx(GlyphSpinner, { size: 24 }),
-        jsx('div', { className: 'text-sm text-(--ui-text-secondary)', children: 'Scanning local clones…' }),
+        jsx('div', { className: 'text-sm text-(--ui-text-secondary)', children: 'Loading viral kit…' }),
       ],
     })
   }
   if (error) {
     return jsx(ErrorState, {
       title: 'Backend not reachable',
-      description: 'Enable smf-app-launcher in Settings → Plugins, then reload.',
+      description: 'Enable smf-app-launcher in Settings → Plugins, then remount the gateway.',
     })
   }
   if (apps.length === 0) {
@@ -197,8 +227,8 @@ function AppLauncherPage({ ctx }) {
       className: 'flex h-full flex-col items-center justify-center gap-3 p-8',
       children: [
         jsx(EmptyState, {
-          title: 'No viral apps cloned',
-          description: 'Clone a kit app from the SMF Works README (Try these — viral apps). Sites are ignored.',
+          title: 'No viral apps',
+          description: 'The kit should list even before clone. Rescan, or remount the plugin backend.',
         }),
         jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => refetch(), children: 'Rescan' }),
       ],
@@ -207,22 +237,25 @@ function AppLauncherPage({ ctx }) {
   return jsx(AppGrid, {
     apps,
     onOpen: async (app) => {
-      const existing = localUrl(app)
-      if (existing) {
-        $selectedApp.set({ ...app, url: existing })
-        return
-      }
       $starting.set(app.name)
       try {
-        const started = await ctx.rest('/apps/' + encodeURIComponent(app.name) + '/start', { method: 'POST' })
+        const started = await ctx.rest('/apps/' + encodeURIComponent(app.name) + '/start', {
+          method: 'POST',
+          timeoutMs: START_TIMEOUT_MS,
+        })
+        if (started && started.ok === false) {
+          host.notify({ kind: 'error', message: errText(started) })
+          return
+        }
         const local = localUrl(started)
         if (!local) {
-          host.notify({ kind: 'error', message: (started && started.error) || 'Local start failed' })
+          host.notify({ kind: 'error', message: errText(started) || 'Local start failed' })
           return
         }
         $selectedApp.set({ ...app, ...started, url: local })
+        void refetch()
       } catch (err) {
-        host.notify({ kind: 'error', message: (err && err.message) || 'Could not start local app' })
+        host.notify({ kind: 'error', message: errText(err) })
       } finally {
         $starting.set(null)
       }
