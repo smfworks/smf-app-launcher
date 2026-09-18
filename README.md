@@ -12,19 +12,43 @@ A [Hermes Agent](https://github.com/NousResearch/hermes-agent) desktop plugin th
 
 ## Install
 
+One shot (covers profiles + Desktop JS + enable):
+
 ```bash
 git clone https://github.com/smfworks/smf-app-launcher.git ~/.hermes/plugins/smf-app-launcher
-mkdir -p ~/.hermes/desktop-plugins/smf-app-launcher
-cp ~/.hermes/plugins/smf-app-launcher/desktop/plugin.js ~/.hermes/desktop-plugins/smf-app-launcher/plugin.js
-hermes plugins enable smf-app-launcher
+bash ~/.hermes/plugins/smf-app-launcher/install.sh
 ```
 
-Then remount the Desktop backend (quit and relaunch Hermes Desktop, or restart the `hermes serve` process). ⌘K → Reload desktop plugins loads the UI only; it does not mount `plugin_api.py`.
+Or, if Hermes is already on PATH:
+
+```bash
+hermes plugins install smfworks/smf-app-launcher --enable
+bash "${HERMES_HOME:-$HOME/.hermes}/plugins/smf-app-launcher/install.sh"
+```
+
+`install.sh` enables the plugin on `$HOME/.hermes` **and** every `profiles/*/plugins` home Desktop may spawn, copies `desktop/plugin.js` into `$HOME/.hermes/desktop-plugins/smf-app-launcher/` (what packaged Electron actually loads), and tells you to **quit and relaunch Desktop**.
+
+**⌘K → Reload desktop plugins is JS only.** It does not mount `plugin_api.py`. If SMF Apps says **Backend not reachable**, the serve process started before enable — quit Desktop and launch it again.
+
+Do **not** run `hermes desktop` to relaunch if you already have the packaged Linux binary. That command rewrites the `.desktop` `Exec=` and can prompt for `chrome-sandbox` sudo. Use the menu entry / `…/linux-unpacked/Hermes --no-sandbox`.
+
+Then:
 
 1. Settings → Plugins → SMF Apps → on
-2. Sidebar → **SMF Apps**
+2. Sidebar → **SMF Apps** (or ⌘K → Open SMF App Launcher)
 
 Needs Node.js 20+ (`npm`) and git on PATH. First open of an app can take a minute while `npm install` runs.
+
+### Give this to a Hermes agent
+
+```
+Install SMF App Launcher from https://github.com/smfworks/smf-app-launcher
+Run bash ~/.hermes/plugins/smf-app-launcher/install.sh (clone first if missing).
+Enable on $HOME/.hermes and every profiles/*/ that already has a plugins dir.
+Copy desktop/plugin.js to $HOME/.hermes/desktop-plugins/smf-app-launcher/.
+Do not run hermes desktop. Do not kill this chat from inside it.
+Tell me to quit Hermes Desktop and relaunch from the menu so plugin_api.py mounts.
+```
 
 ## Viral kit
 
@@ -47,6 +71,8 @@ Add a kit name to `KIT` in `dashboard/plugin_api.py`. Titles also enrich from th
 
 ```
 smf-app-launcher/
+├── install.sh
+├── AGENTS.md
 ├── plugin.yaml
 ├── __init__.py
 ├── dashboard/
