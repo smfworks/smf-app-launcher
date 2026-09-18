@@ -1,9 +1,9 @@
 {
   "name": "smf-app-launcher",
   "label": "SMF Apps",
-  "description": "Launch viral SMF utility apps cloned to ~/projects/ — rendered inside Hermes Desktop.",
+  "description": "Clone, install, and open SMF viral apps on localhost inside Hermes Desktop.",
   "icon": "Rocket",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tab": {
     "path": "/smf-apps",
     "position": "after:artifacts"
