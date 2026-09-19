@@ -279,6 +279,8 @@ def _save_state(procs: Dict[str, Dict[str, Any]]) -> None:
 def _kill_pg(pgid: int, pid: int, wait_sec: float = 2.0) -> None:
     if pid <= 1:
         return
+    if pgid <= 1:
+        pgid = pid
     try:
         os.killpg(pgid, signal.SIGTERM)
     except (OSError, AttributeError):
@@ -349,10 +351,35 @@ def _prefer_listener(candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
     return min(candidates, key=lambda r: int(r["port"]))
 
 
+def _adopt_from_state(name: str, rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Trust a persisted pid only if cmdline/cwd still look like our Vite."""
+    try:
+        pid = int(rec.get("pid") or 0)
+        port = int(rec.get("port") or 0)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 1 or not port:
+        return None
+    owned = _owned_vite_rec(pid)
+    if owned is None or owned.get("name") != name:
+        return None
+    if int(owned["port"]) != port:
+        return None
+    if not _port_open(port):
+        return None
+    return {
+        "name": name,
+        "pid": pid,
+        "port": port,
+        "pgid": int(owned.get("pgid") or rec.get("pgid") or pid),
+    }
+
+
 def _hydrate_procs() -> None:
     """Re-adopt vites under the clone root; reap duplicate copies of the same app."""
+    extras_to_kill: List[Tuple[int, int]] = []
     with _PROCS_LOCK:
-        state = dict(_PROCS) if _PROCS else _load_state()
+        state = {**_load_state(), **dict(_PROCS)}
         live = _discover_owned()
         names = set(KIT) & (set(state) | set(live))
         new_procs: Dict[str, Dict[str, Any]] = {}
@@ -365,16 +392,7 @@ def _hydrate_procs() -> None:
             if keep is None and candidates:
                 keep = _prefer_listener(candidates)
             if keep is None and name in state:
-                rec = state[name]
-                pid = int(rec.get("pid") or 0)
-                port = int(rec.get("port") or 0)
-                if pid > 0 and _proc_alive(pid) and port and _port_open(port):
-                    keep = {
-                        "name": name,
-                        "pid": pid,
-                        "port": port,
-                        "pgid": int(rec.get("pgid") or pid),
-                    }
+                keep = _adopt_from_state(name, state[name])
             if keep is None:
                 continue
             new_procs[name] = {
@@ -389,10 +407,12 @@ def _hydrate_procs() -> None:
                 extra_pgid = int(extra.get("pgid") or extra_pid)
                 if extra_pid == keep_pid or extra_pgid == keep_pgid:
                     continue
-                _kill_pg(extra_pgid, extra_pid)
+                extras_to_kill.append((extra_pgid, extra_pid))
         _PROCS.clear()
         _PROCS.update(new_procs)
         _save_state(_PROCS)
+    for pgid, pid in extras_to_kill:
+        _kill_pg(pgid, pid)
 
 
 def _dev_url(path: Path) -> Optional[str]:
@@ -646,6 +666,11 @@ def _rm_incomplete(path: Path) -> None:
 
 def ensure_clone(name: str) -> Tuple[Optional[Path], Optional[str]]:
     dest = _clone_root() / name
+    if dest.is_symlink() and not _is_under_clone_root(dest):
+        try:
+            dest.unlink()
+        except OSError as exc:
+            return None, f"could not replace symlink {dest}: {exc}"
     if dest.exists():
         if not _is_under_clone_root(dest):
             return None, f"{dest} is outside ~/.hermes/smf-apps"

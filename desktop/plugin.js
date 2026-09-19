@@ -64,8 +64,8 @@ function statusLabel(app) {
 function AppCard({ app, onOpen }) {
   const url = localUrl(app)
   const starting = useValue($starting)
-  const busy = starting != null
   const thisStarting = starting === app.name
+  const busy = thisStarting
   return jsxs('div', {
     className: cn(
       'group relative flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary)',
@@ -155,7 +155,12 @@ function AppGrid({ apps, onOpen }) {
   })
 }
 
-function openLocal(url) {
+function openLocal(url, ctx) {
+  const viaOs = ctx && ctx.os && typeof ctx.os.openExternal === 'function'
+  if (viaOs) {
+    void ctx.os.openExternal(url)
+    return
+  }
   if (typeof host.openExternal === 'function') {
     void host.openExternal(url)
     return
@@ -175,7 +180,9 @@ function AppLive({ app, ctx, onBack }) {
           jsx(Button, {
             variant: 'ghost',
             size: 'sm',
+            disabled: stopping,
             onClick: () => {
+              if (stopping) return
               haptic('tap')
               onBack()
             },
@@ -195,7 +202,7 @@ function AppLive({ app, ctx, onBack }) {
                 className: 'h-7 text-xs',
                 onClick: () => {
                   haptic('tap')
-                  openLocal(url)
+                  openLocal(url, ctx)
                 },
                 children: 'Open in browser',
               })

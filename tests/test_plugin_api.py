@@ -45,8 +45,21 @@ def isolated(tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setattr(api, "_clone_root", lambda: root)
     monkeypatch.setattr(api, "_home", lambda: tmp_path)
-    monkeypatch.setattr(api, "_hydrate_procs", lambda: None)
     monkeypatch.setattr(api, "_discover_owned", lambda: {})
+    monkeypatch.setattr(api, "fetch_readme_extra", lambda: {})
+
+    def owned_from_procs(pid: int):
+        for name, rec in list(api._PROCS.items()):
+            if int(rec.get("pid") or 0) == pid:
+                return {
+                    "name": name,
+                    "pid": pid,
+                    "port": int(rec["port"]),
+                    "pgid": int(rec.get("pgid") or pid),
+                }
+        return None
+
+    monkeypatch.setattr(api, "_owned_vite_rec", owned_from_procs)
     return root
 
 
@@ -134,8 +147,7 @@ def test_list_apps_is_sync():
     assert not inspect.iscoroutinefunction(api.stop_app)
 
 
-def test_scan_clones_ignores_projects_checkout(isolated, tmp_path, monkeypatch):
-    monkeypatch.setattr(api, "_hydrate_procs", lambda: None)
+def test_scan_clones_ignores_projects_checkout(isolated, tmp_path):
     _fake_app(tmp_path / "Projects", "paste-to-skill")
     _fake_app(isolated, "skill-lint")
     found = api._scan_clones()
@@ -242,6 +254,7 @@ def test_start_reuses_already_running_port(isolated, monkeypatch):
 def test_stop_clears_state_and_kills(isolated, monkeypatch):
     killed = []
     api._PROCS["skill-lint"] = {"port": 5267, "pid": 77, "pgid": 77}
+    monkeypatch.setattr(api, "_port_open", lambda port: port == 5267)
     monkeypatch.setattr(
         api,
         "_kill_pg",
@@ -301,3 +314,117 @@ def test_stop_rejects_unknown_app():
     body = _body(api.stop_app("../etc/passwd"))
     assert body["ok"] is False
     assert "viral-kit" in body["error"]
+
+
+def test_hydrate_merges_disk_state_with_memory(isolated, monkeypatch):
+    api._PROCS["paste-to-skill"] = {"port": 5241, "pid": 50, "pgid": 50}
+    (isolated / ".state.json").write_text(
+        json.dumps({
+            "paste-to-skill": {"port": 5241, "pid": 50, "pgid": 50},
+            "skill-lint": {"port": 5267, "pid": 60, "pgid": 60},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        api,
+        "_discover_owned",
+        lambda: {
+            "skill-lint": [{"name": "skill-lint", "pid": 60, "port": 5267, "pgid": 60}],
+        },
+    )
+    monkeypatch.setattr(api, "_port_open", lambda port: port in (5241, 5267))
+    monkeypatch.setattr(
+        api,
+        "_owned_vite_rec",
+        lambda pid: {
+            50: {"name": "paste-to-skill", "pid": 50, "port": 5241, "pgid": 50},
+            60: {"name": "skill-lint", "pid": 60, "port": 5267, "pgid": 60},
+        }.get(pid),
+    )
+    api._hydrate_procs()
+    assert api._PROCS["paste-to-skill"]["port"] == 5241
+    assert api._PROCS["skill-lint"]["port"] == 5267
+
+
+def test_hydrate_rejects_reused_state_pid(isolated, monkeypatch):
+    (isolated / ".state.json").write_text(
+        json.dumps({"paste-to-skill": {"port": 5241, "pid": 50, "pgid": 50}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api, "_port_open", lambda port: port == 5241)
+    monkeypatch.setattr(api, "_proc_alive", lambda pid: pid == 50)
+    monkeypatch.setattr(api, "_owned_vite_rec", lambda _pid: None)
+    api._hydrate_procs()
+    assert "paste-to-skill" not in api._PROCS
+
+
+def test_ensure_clone_replaces_outside_symlink(isolated, tmp_path, monkeypatch):
+    target = _fake_app(tmp_path / "Projects", "paste-to-skill")
+    dest = isolated / "paste-to-skill"
+    dest.symlink_to(target)
+
+    def fake_run(cmd, **_kwargs):
+        assert cmd[0] == "git"
+        assert not dest.exists()
+        _fake_app(isolated, "paste-to-skill")
+        class Ok:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+        return Ok()
+
+    monkeypatch.setattr(api.subprocess, "run", fake_run)
+    path, err = api.ensure_clone("paste-to-skill")
+    assert err is None
+    assert path == dest.resolve()
+    assert path.is_dir()
+    assert not dest.is_symlink()
+    assert target.is_dir()
+    assert (target / "index.html").is_file()
+
+
+def test_list_apps_readopts_live_vite(isolated, monkeypatch):
+    _fake_app(isolated, "paste-to-skill")
+    monkeypatch.setattr(
+        api,
+        "_discover_owned",
+        lambda: {
+            "paste-to-skill": [
+                {"name": "paste-to-skill", "pid": 50, "port": 5241, "pgid": 50},
+            ]
+        },
+    )
+    monkeypatch.setattr(api, "_port_open", lambda port: port == 5241)
+    monkeypatch.setattr(api, "_proc_alive", lambda pid: pid == 50)
+    body = _body(api.list_apps())
+    rec = next(a for a in body["apps"] if a["name"] == "paste-to-skill")
+    assert rec["cloned"] is True
+    assert rec["dev_url"] == "http://127.0.0.1:5241/"
+    assert api._PROCS["paste-to-skill"]["pid"] == 50
+
+
+def test_start_and_stop_go_through_hydrate(isolated, monkeypatch):
+    _fake_app(isolated, "skill-lint")
+    api._PROCS["skill-lint"] = {"port": 5267, "pid": 77, "pgid": 77}
+    monkeypatch.setattr(api, "_port_open", lambda port: port == 5267)
+    monkeypatch.setattr(api, "_proc_alive", lambda pid: pid == 77)
+    monkeypatch.setattr(api, "ensure_npm_install", lambda _path: None)
+    monkeypatch.setattr(
+        api.subprocess,
+        "Popen",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("second vite")),
+    )
+    started = _body(api.start_app("skill-lint"))
+    assert started["ok"] is True
+    assert started["url"] == "http://127.0.0.1:5267/"
+
+    killed = []
+    monkeypatch.setattr(
+        api,
+        "_kill_pg",
+        lambda pgid, pid, wait_sec=2.0: killed.append((pgid, pid)),
+    )
+    stopped = _body(api.stop_app("skill-lint"))
+    assert stopped["ok"] is True
+    assert "skill-lint" not in api._PROCS
+    assert killed == [(77, 77)]
