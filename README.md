@@ -5,7 +5,7 @@ A [Hermes Agent](https://github.com/NousResearch/hermes-agent) desktop plugin th
 ## What it does
 
 - **Sidebar** — SMF Apps, plus ⌘K → Open SMF App Launcher
-- **Kit grid** — the fourteen viral tools, even before they are cloned
+- **Kit grid** — the fifteen viral tools, even before they are cloned
 - **Install & open** — clone into `~/.hermes/smf-apps/<app>` only, `npm install` if needed, start Vite on a dedicated loopback port, iframe that URL
 - **Stop / open in browser** — Stop kills the owned process group; Open in browser uses the OS handler
 - **Owned ports only** — never treats an unrelated Vite on `:5173` as the app; relaunch re-adopts leftover vites under `smf-apps` and reaps duplicates
@@ -57,6 +57,7 @@ Tell me to quit Hermes Desktop and relaunch from the menu so plugin_api.py mount
 |-----|-------------|------|
 | Paste → Skill | Paste an SOP or notes → Hermes/OpenClaw `SKILL.md` | [paste-to-skill](https://github.com/smfworks/paste-to-skill) |
 | Skill Lint | Green / yellow / red `SKILL.md` report card | [skill-lint](https://github.com/smfworks/skill-lint) |
+| Eval Scorecard | Eval / judge output → green / yellow / red grade card | [eval-scorecard](https://github.com/smfworks/eval-scorecard) |
 | Skill Card | `SKILL.md` → shareable PNG | [skill-card](https://github.com/smfworks/skill-card) |
 | Persona Card | SOUL / system prompt → persona one-pager | [persona-card](https://github.com/smfworks/persona-card) |
 | Prompt Diff | Visual shareable prompt diff | [prompt-diff](https://github.com/smfworks/prompt-diff) |

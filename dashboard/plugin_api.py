@@ -50,6 +50,10 @@ KIT: Dict[str, Dict[str, str]] = {
         "title": "Skill Lint",
         "description": "Green / yellow / red SKILL.md report card with fix hints",
     },
+    "eval-scorecard": {
+        "title": "Eval Scorecard",
+        "description": "Paste eval / judge output → green / yellow / red shareable grade card",
+    },
     "skill-card": {
         "title": "Skill Card",
         "description": "Paste a SKILL.md → pretty shareable one-pager PNG",
