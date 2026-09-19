@@ -97,8 +97,9 @@ def test_merge_catalog_includes_uncloned_kit_apps():
     assert rec["cloned"] is False
     assert rec["dev_url"] in (None, "")
     assert rec["title"] == "Paste → Skill"
-    assert len(apps) >= 14
+    assert len(apps) >= 15
     for name in (
+        "eval-scorecard",
         "persona-card",
         "session-timeline",
         "handoff-slip",
