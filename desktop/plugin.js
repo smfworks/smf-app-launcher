@@ -63,7 +63,9 @@ function statusLabel(app) {
 
 function AppCard({ app, onOpen }) {
   const url = localUrl(app)
-  const busy = useValue($starting) === app.name
+  const starting = useValue($starting)
+  const thisStarting = starting === app.name
+  const busy = thisStarting
   return jsxs('div', {
     className: cn(
       'group relative flex flex-col gap-2 rounded-lg border border-(--ui-stroke-secondary)',
@@ -100,7 +102,7 @@ function AppCard({ app, onOpen }) {
           onOpen(app)
         },
         className: 'h-7 text-xs',
-        children: busy ? 'Starting…' : url ? 'Open' : app.local_path ? 'Start local' : 'Install & open',
+        children: thisStarting ? 'Starting…' : url ? 'Open' : app.local_path ? 'Start local' : 'Install & open',
       }),
     ],
   })
@@ -153,8 +155,22 @@ function AppGrid({ apps, onOpen }) {
   })
 }
 
-function AppLive({ app, onBack }) {
+function openLocal(url, ctx) {
+  const viaOs = ctx && ctx.os && typeof ctx.os.openExternal === 'function'
+  if (viaOs) {
+    void ctx.os.openExternal(url)
+    return
+  }
+  if (typeof host.openExternal === 'function') {
+    void host.openExternal(url)
+    return
+  }
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+function AppLive({ app, ctx, onBack }) {
   const url = localUrl(app)
+  const stopping = useValue($starting) === 'stop:' + app.name
   return jsxs('div', {
     className: 'flex h-full min-h-0 flex-col',
     children: [
@@ -164,7 +180,9 @@ function AppLive({ app, onBack }) {
           jsx(Button, {
             variant: 'ghost',
             size: 'sm',
+            disabled: stopping,
             onClick: () => {
+              if (stopping) return
               haptic('tap')
               onBack()
             },
@@ -177,6 +195,39 @@ function AppLive({ app, onBack }) {
             children: app.title || app.name,
           }),
           jsx(Badge, { className: 'text-[0.625rem]', children: 'localhost' }),
+          url
+            ? jsx(Button, {
+                variant: 'ghost',
+                size: 'sm',
+                className: 'h-7 text-xs',
+                onClick: () => {
+                  haptic('tap')
+                  openLocal(url, ctx)
+                },
+                children: 'Open in browser',
+              })
+            : null,
+          jsx(Button, {
+            variant: 'ghost',
+            size: 'sm',
+            disabled: stopping,
+            className: 'h-7 text-xs',
+            onClick: async () => {
+              haptic('tap')
+              $starting.set('stop:' + app.name)
+              try {
+                await ctx.rest('/apps/' + encodeURIComponent(app.name) + '/stop', {
+                  method: 'POST',
+                })
+                onBack()
+              } catch (err) {
+                host.notify({ kind: 'error', message: errText(err) })
+              } finally {
+                $starting.set(null)
+              }
+            },
+            children: stopping ? 'Stopping…' : 'Stop',
+          }),
         ],
       }),
       url
@@ -205,7 +256,14 @@ function AppLauncherPage({ ctx }) {
   })
   const apps = (data && data.apps) || []
   if (selected) {
-    return jsx(AppLive, { app: selected, onBack: () => $selectedApp.set(null) })
+    return jsx(AppLive, {
+      app: selected,
+      ctx,
+      onBack: () => {
+        $selectedApp.set(null)
+        void refetch()
+      },
+    })
   }
   if (isLoading) {
     return jsxs('div', {
@@ -217,9 +275,16 @@ function AppLauncherPage({ ctx }) {
     })
   }
   if (error) {
-    return jsx(ErrorState, {
-      title: 'Backend not reachable',
-      description: 'Enable smf-app-launcher in Settings → Plugins, then remount the gateway.',
+    return jsxs('div', {
+      className: 'flex h-full flex-col items-center justify-center gap-3 p-8',
+      children: [
+        jsx(ErrorState, {
+          title: 'Backend not reachable',
+          description:
+            'Enable SMF Apps in Settings → Plugins, then quit Hermes Desktop and relaunch from the menu. Reload desktop plugins is JS only.',
+        }),
+        jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => refetch(), children: 'Retry' }),
+      ],
     })
   }
   if (apps.length === 0) {

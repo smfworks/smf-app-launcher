@@ -13,7 +13,7 @@ For Hermes/OpenClaw installing this repo on a user's machine.
 - Do not treat ⌘K → Reload desktop plugins as a backend remount. That is JS only. **Backend not reachable** means the serve process predates enable.
 - Do not run `hermes desktop` to relaunch if a packaged Electron binary already exists (`…/linux-unpacked/Hermes --no-sandbox`). `hermes desktop` rewrites the `.desktop` `Exec=` and can prompt for `chrome-sandbox` sudo.
 - Do not `hermes serve --stop` (kills every serve on the box). Do not kill this chat's backend from inside the same Desktop window unless the user asked for a relaunch.
-- Do not iframe Vercel. Start uses `~/.hermes/smf-apps/<kit>` and an owned loopback port.
+- Do not iframe Vercel. Start uses `~/.hermes/smf-apps/<kit>` only (never `~/Projects`) and an owned loopback port. Stop via `POST /apps/{name}/stop`.
 - Do not `git reset --hard` an existing plugin checkout.
 
 ## After relaunch

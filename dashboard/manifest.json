@@ -3,7 +3,7 @@
   "label": "SMF Apps",
   "description": "Clone, install, and open SMF viral apps on localhost inside Hermes Desktop.",
   "icon": "Rocket",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "tab": {
     "path": "/smf-apps",
     "position": "after:artifacts"
